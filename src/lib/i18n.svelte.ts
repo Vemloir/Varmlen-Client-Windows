@@ -166,6 +166,7 @@ const EN: Dict = {
   "settings.subscriptionAutoUpdate": "Automatic subscription updates",
   "settings.subscriptionAutoUpdateSub": "Refresh remote subscriptions on their provider schedule.",
   "ping.na": "n/a",
+  "ping.udp": "udp only",
   "ping.ms": "{n} ms",
 
   // VPN core (xray)
@@ -347,6 +348,7 @@ const RU: Dict = {
   "settings.subscriptionAutoUpdate": "Автообновление подписок",
   "settings.subscriptionAutoUpdateSub": "Обновлять удалённые подписки по расписанию провайдера.",
   "ping.na": "н/д",
+  "ping.udp": "только UDP",
   "ping.ms": "{n} мс",
 
   "settings.core": "Ядро VPN",

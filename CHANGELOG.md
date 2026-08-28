@@ -2,6 +2,15 @@
 
 ## 0.3.1
 
+- Show the `JSON` marker on Hysteria2 locations too. A location edited as a
+  provider profile says so whatever its transport; previously only VLESS and
+  friends carried it.
+- Stop latency-probing UDP-only endpoints with a TCP connect. A Hysteria2,
+  WireGuard, mKCP or QUIC endpoint answers no TCP handshake, so the probe could
+  only ever report a timeout and every healthy Hysteria2 location looked dead.
+  Those locations now say `udp only`; measuring them properly needs the proxy
+  probe the Linux and Android clients have, which Windows does not expose yet.
+
 - Keep the service runtime on stable Xray 26.3.27. The first 0.3.1 installers
   briefly bundled prerelease 26.7.28 and were replaced; transactional core
   switching to any installed official version is retained. Known trade-off:

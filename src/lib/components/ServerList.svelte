@@ -32,6 +32,7 @@
       <span class="srv-ping" aria-label="latency">
         {#if ping === "pinging"}…
         {:else if ping === "timeout"}{t("ping.na")}
+        {:else if ping === "udp"}{t("ping.udp")}
         {:else if typeof ping === "number"}{t("ping.ms", { n: ping })}
         {/if}
       </span>

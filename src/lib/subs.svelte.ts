@@ -20,6 +20,7 @@ import {
   compileFieldDraft,
   type LocationEditDraft,
 } from "$lib/location-draft";
+import { supportsTcpEndpointPing } from "$lib/location-ping";
 import { transportSummary } from "$lib/server-label";
 import { nextRefreshBatch } from "$lib/subscription-refresh";
 import { runPingsInParallel } from "$lib/ping-scheduler";
@@ -27,8 +28,9 @@ export { transportSummary } from "$lib/server-label";
 
 /** Ping result for a server entry. `null` = unknown / not yet measured,
  *  `"pinging"` = probe in flight, `"timeout"` = host unreachable / timed out,
- *  number = RTT in milliseconds. */
-export type PingState = number | "pinging" | "timeout";
+ *  `"udp"` = the transport answers no TCP connect at all, so nothing was
+ *  measured (Hysteria2, WireGuard, QUIC/KCP), number = RTT in milliseconds. */
+export type PingState = number | "pinging" | "timeout" | "udp";
 
 export interface ServerEntry {
   id: string;
@@ -665,6 +667,13 @@ class SubsStore {
   /** Probe one server with a bounded TCP connect. Updates `pings[id]` in
    * place and never throws. */
   async pingServer(srv: ServerEntry): Promise<void> {
+    // A UDP-only endpoint listens on UDP, so a TCP connect there measures the
+    // absence of a protocol. Saying "not measurable" is the truth; saying
+    // "timed out" called every healthy Hysteria2 node dead.
+    if (!supportsTcpEndpointPing(srv.raw)) {
+      this.pings = { ...this.pings, [srv.id]: "udp" };
+      return;
+    }
     this.pings = { ...this.pings, [srv.id]: "pinging" };
     try {
       const rtt = await tcpPingHost(srv.raw.host, srv.raw.port, 2500);
