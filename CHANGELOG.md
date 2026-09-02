@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.1
+## 0.3.2
 
 - Show the `JSON` marker on Hysteria2 locations too. A location edited as a
   provider profile says so whatever its transport; previously only VLESS and
@@ -10,6 +10,8 @@
   only ever report a timeout and every healthy Hysteria2 location looked dead.
   Those locations now say `udp only`; measuring them properly needs the proxy
   probe the Linux and Android clients have, which Windows does not expose yet.
+
+## 0.3.1
 
 - Keep the service runtime on stable Xray 26.3.27. The first 0.3.1 installers
   briefly bundled prerelease 26.7.28 and were replaced; transactional core
