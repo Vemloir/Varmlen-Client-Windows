@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- The client no longer picks a different location by itself. A refresh
+  regenerates every location id, so the chosen one was re-found by its endpoint
+  (`protocol:host:port:uuid`) -- and a composite JSON profile exposes its FIRST
+  proxy outbound as that host, which is exactly what a provider rotates: when
+  Proxen moved the primary of «США», the stored endpoint matched nothing and the
+  selection fell back to the first location of the first subscription, so the
+  active location jumped on its own. The selection is now re-found by endpoint
+  and then by the location label inside the same subscription; a location that
+  really vanished leaves nothing selected and says so instead of choosing another
+  one, and its identity is kept, so an update that brings it back restores the
+  choice.
+
 ## 0.3.2
 
 - Show the `JSON` marker on Hysteria2 locations too. A location edited as a
