@@ -19,6 +19,14 @@
   fields, where Cut/Copy/Paste is what the gesture means -- and Backspace and
   Alt+arrows no longer walk page history outside a field.
 
+- The ✕ of a modal answered only when the user missed the icon: an icon-only button
+  is clicked on its `<svg>`, and an `SVGElement` is not an `HTMLElement`.
+- A refresh no longer moves the chosen location into another card. Resolution is
+  scoped to the card the user picked from and only a deleted card releases the
+  choice; the endpoint key now carries transport, security, SNI, flow, path and the
+  two REALITY fields, and a key shared by several locations is broken by the label
+  the user chose instead of by the order in the provider's list.
+
 - The client no longer picks a different location by itself. A refresh
   regenerates every location id, so the chosen one was re-found by its endpoint
   (`protocol:host:port:uuid`) -- and a composite JSON profile exposes its FIRST
