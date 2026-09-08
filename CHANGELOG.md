@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Right-click a location for its menu: ping, rename, pin, hide -- or delete, for a
+  location of a manually added configuration. Hidden locations leave the card and
+  come back through its own "N hidden" line; how long they stay away is a setting
+  (until I refresh it myself, until the next update, until I show it again), and
+  pinned ones move to the top of the list with the same pin mark a pinned card
+  carries. Both are keyed by the endpoint key, never by the entry id, because a
+  refresh regenerates every id. The menu is one per app and as wide as its longest
+  item, measured from the item text rather than left to `max-content`.
+- A manually added configuration no longer pretends to be a subscription: no
+  refresh (nothing fetches it), no ⋮ menu (rename, JSON and remove are subscription
+  actions), only the ping. Its locations are deleted for real, and when the last
+  one goes the card goes with it.
+- The window stops behaving like a browser tab. Right-click no longer opens the
+  WebView's own Back / Forward / Stop / Reload menu -- everywhere except editable
+  fields, where Cut/Copy/Paste is what the gesture means -- and Backspace and
+  Alt+arrows no longer walk page history outside a field.
+
 - The client no longer picks a different location by itself. A refresh
   regenerates every location id, so the chosen one was re-found by its endpoint
   (`protocol:host:port:uuid`) -- and a composite JSON profile exposes its FIRST

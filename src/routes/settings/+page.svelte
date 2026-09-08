@@ -6,9 +6,24 @@
   import { core } from "$lib/core.svelte";
   import { autostartStatus, setAutostart, vpnLog, clearVpnLog, notificationsEnabled, openNotificationSettings } from "$lib/api";
   import Dropdown from "$lib/components/Dropdown.svelte";
+  import type { HideLocationsMode, PinOrder } from "$lib/location-actions";
   import { onMount, tick } from "svelte";
   import { isAndroid } from "$lib/platform";
   import { getVersion } from "@tauri-apps/api/app";
+
+  const hideModeOptions = $derived([
+    {
+      value: "untilManualRefresh",
+      label: t("settings.hideMode.untilManualRefresh"),
+    },
+    { value: "untilRefresh", label: t("settings.hideMode.untilRefresh") },
+    { value: "never", label: t("settings.hideMode.never") },
+  ]);
+
+  const pinOrderOptions = $derived([
+    { value: "newestLast", label: t("settings.pinOrder.newestLast") },
+    { value: "newestFirst", label: t("settings.pinOrder.newestFirst") },
+  ]);
 
   const logLevelOptions = $derived([
     { value: "debug", label: "debug" },
@@ -344,6 +359,30 @@
         </span>
       </label>
       {/if}
+      <div class="row">
+        <div class="row-text">
+          <div class="row-title">{t("settings.hideLocations")}</div>
+          <div class="row-sub muted">{t("settings.hideLocationsSub")}</div>
+        </div>
+        <Dropdown
+          value={settings.hideLocations}
+          options={hideModeOptions}
+          onChange={(v) => settings.setHideLocations(v as HideLocationsMode)}
+          ariaLabel={t("settings.hideLocations")}
+        />
+      </div>
+      <div class="row">
+        <div class="row-text">
+          <div class="row-title">{t("settings.pinOrder")}</div>
+          <div class="row-sub muted">{t("settings.pinOrderSub")}</div>
+        </div>
+        <Dropdown
+          value={settings.pinOrder}
+          options={pinOrderOptions}
+          onChange={(v) => settings.setPinOrder(v as PinOrder)}
+          ariaLabel={t("settings.pinOrder")}
+        />
+      </div>
       <div class="row">
         <div class="row-text">
           <div class="row-title">{t("settings.subscriptionUa")}</div>
