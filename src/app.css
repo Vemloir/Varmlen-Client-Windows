@@ -200,6 +200,16 @@ a {
     width: 0;
     height: 0;
   }
+  /* The pages pad 20px on the left against 14px on the right to mirror the 6px
+     bar, which is gone here: even them out, or everything sits to the right. */
+  .scroll,
+  .page .pane {
+    padding-left: 14px !important;
+  }
+  .page > .segmented,
+  .page > .split-unavailable {
+    margin-left: 14px !important;
+  }
 }
 
 /* Android draws edge-to-edge (status bar over the app); shift the top bars down
