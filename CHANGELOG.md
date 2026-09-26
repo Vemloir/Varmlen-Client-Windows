@@ -35,6 +35,10 @@ The Linux 0.4.0 interface, ported, and the grey window fixed on Windows too.
   once, as before).
 - One rounding family, one panel colour, a segmented control whose selection
   slides, nothing selectable except the fields the user types into.
+- A selective website list works with applications in general mode. The default
+  outbound followed the applications' mode alone, so everything went through the
+  VPN and the website list did nothing. Either list in selective mode now makes
+  the default direct.
 
 ## 0.3.2
 
