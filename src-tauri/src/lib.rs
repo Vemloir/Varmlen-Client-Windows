@@ -6,6 +6,7 @@ mod storage;
 mod subscription;
 mod tray;
 mod vpn;
+mod webview_recovery;
 mod xray;
 
 use std::time::Duration;
@@ -397,6 +398,7 @@ pub fn run() {
             vpn::vpn_disconnect,
             vpn::vpn_status,
             vpn::tcp_ping_host,
+            vpn::tunnel_stats,
             vpn::vpn_log,
             vpn::clear_vpn_log,
             vpn::read_clipboard,
@@ -426,6 +428,9 @@ pub fn run() {
         })
         .setup(|app| {
             use tauri::Manager;
+            // A dead renderer leaves the window grey for good; reload instead.
+            #[cfg(windows)]
+            webview_recovery::install(app.handle());
             // System tray + start-minimized are desktop-only.
             #[cfg(desktop)]
             {

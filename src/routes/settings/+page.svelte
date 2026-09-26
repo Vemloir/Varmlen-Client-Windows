@@ -1,7 +1,11 @@
 <script lang="ts">
+  import { navPath } from "$lib/nav-path";
+  import { persistScroll } from "$lib/scroll-memory";
   import { theme } from "$lib/theme.svelte";
+  import { MTU_MAX, MTU_MIN } from "$lib/mtu";
   import { settings, type LogLevel } from "$lib/settings.svelte";
   import type { SubscriptionUserAgent } from "$lib/subscription-user-agent";
+  import type { PinOrder } from "$lib/location-actions";
   import { i18n, t, LANGUAGES, type Lang } from "$lib/i18n.svelte";
   import { core } from "$lib/core.svelte";
   import { autostartStatus, setAutostart, vpnLog, clearVpnLog, notificationsEnabled, openNotificationSettings } from "$lib/api";
@@ -9,6 +13,12 @@
   import { onMount, tick } from "svelte";
   import { isAndroid } from "$lib/platform";
   import { getVersion } from "@tauri-apps/api/app";
+
+  interface Props {
+    /** Path of the tab this page is standing in as; empty when it is the page. */
+    preview?: string;
+  }
+  let { preview = "" }: Props = $props();
 
   const logLevelOptions = $derived([
     { value: "debug", label: "debug" },
@@ -95,6 +105,7 @@
   let autostartMinimized = $state(false);
   let appVersion = $state("…");
   onMount(async () => {
+    if (preview) return;
     try {
       const s = await autostartStatus();
       autostart = s.enabled;
@@ -104,6 +115,7 @@
     }
   });
   onMount(async () => {
+    if (preview) return;
     try {
       appVersion = await getVersion();
     } catch {
@@ -120,6 +132,7 @@
     }
   }
   onMount(() => {
+    if (preview) return;
     refreshNotif();
     const onVis = () => { if (document.visibilityState === "visible") refreshNotif(); };
     document.addEventListener("visibilitychange", onVis);
@@ -145,6 +158,16 @@
     }
   }
 
+  const themeOptions = $derived([
+    { value: "dark", label: t("settings.dark") },
+    { value: "light", label: t("settings.light") },
+  ]);
+
+  const pinOrderOptions = $derived([
+    { value: "newestLast", label: t("settings.pinOrder.newestLast") },
+    { value: "newestFirst", label: t("settings.pinOrder.newestFirst") },
+  ]);
+
   const subscriptionUaOptions = [
     { value: "varmlen", label: "Varmlen" },
     { value: "happ", label: "Happ" },
@@ -154,6 +177,7 @@
 
   // Refresh the core's status when Settings opens (cheap GitHub check).
   $effect(() => {
+    if (preview) return;
     void core.check();
   });
 
@@ -229,35 +253,27 @@
   <h1>{t("settings.title")}</h1>
 </header>
 
-<main class="scroll fade-y">
+<main class="scroll" data-scroll use:persistScroll={preview || navPath()}>
   <section>
     <h2>{t("settings.appearance")}</h2>
-    <div class="card theme-card">
-      <div class="theme-row">
-        <button
-          class="theme-tile"
-          class:active={theme.current === "dark"}
-          onclick={() => theme.set("dark")}
-          aria-pressed={theme.current === "dark"}
-        >
-          <div class="swatch swatch-dark"></div>
-          <span>{t("settings.dark")}</span>
-        </button>
-        <button
-          class="theme-tile"
-          class:active={theme.current === "light"}
-          onclick={() => theme.set("light")}
-          aria-pressed={theme.current === "light"}
-        >
-          <div class="swatch swatch-light"></div>
-          <span>{t("settings.light")}</span>
-        </button>
+    <div class="list">
+      <div class="row">
+        <div class="row-text">
+          <div class="row-title">{t("settings.theme")}</div>
+        </div>
+        <Dropdown
+          value={theme.current}
+          options={themeOptions}
+          onChange={(v) => theme.set(v as "dark" | "light")}
+          ariaLabel={t("settings.theme")}
+        />
       </div>
     </div>
   </section>
 
+  <!-- How the app looks and behaves, as opposed to how the tunnel works. -->
   <section>
-    <h2>{t("settings.general")}</h2>
+    <h2>{t("settings.interface")}</h2>
     <div class="list">
       <div class="row">
         <div class="row-text">
@@ -272,32 +288,38 @@
       </div>
       <label class="row">
         <div class="row-text">
-          <div class="row-title">{t("settings.killswitch")}</div>
-          <div class="row-sub muted">{t("settings.killswitchSub")}</div>
+          <div class="row-title">{t("settings.navLabels")}</div>
+          <div class="row-sub muted">{t("settings.navLabelsSub")}</div>
         </div>
         <span class="switch">
           <input
             type="checkbox"
-            checked={settings.killswitch}
-            onchange={(e) => settings.setKillswitch((e.currentTarget as HTMLInputElement).checked)}
+            checked={settings.navLabels}
+            onchange={(e) => settings.setNavLabels((e.currentTarget as HTMLInputElement).checked)}
           />
           <span class="slider"></span>
         </span>
       </label>
-      <label class="row">
+      <div class="row">
         <div class="row-text">
-          <div class="row-title">{t("settings.allowLan")}</div>
-          <div class="row-sub muted">{t("settings.allowLanSub")}</div>
+          <div class="row-title">{t("settings.pinOrder")}</div>
+          <div class="row-sub muted">{t("settings.pinOrderSub")}</div>
         </div>
-        <span class="switch">
-          <input
-            type="checkbox"
-            checked={settings.allowLan}
-            onchange={(e) => settings.setAllowLan((e.currentTarget as HTMLInputElement).checked)}
-          />
-          <span class="slider"></span>
-        </span>
-      </label>
+        <Dropdown
+          value={settings.pinOrder}
+          options={pinOrderOptions}
+          onChange={(v) => settings.setPinOrder(v as PinOrder)}
+          ariaLabel={t("settings.pinOrder")}
+        />
+      </div>
+    </div>
+  </section>
+
+  <!-- Everything that belongs to the app itself rather than to how it looks or to
+       the tunnel: the tray, the window, launching at login. -->
+  <section>
+    <h2>{t("settings.general")}</h2>
+    <div class="list">
       <!-- Tray / window / autostart are desktop concepts; hide on Android. -->
       {#if !isAndroid}
       <label class="row">
@@ -344,6 +366,79 @@
         </span>
       </label>
       {/if}
+    </div>
+  </section>
+
+  <!-- How the tunnel itself works. -->
+  <section>
+    <h2>{t("settings.vpn")}</h2>
+    <div class="list">
+      <label class="row">
+        <div class="row-text">
+          <div class="row-title">{t("settings.killswitch")}</div>
+          <div class="row-sub muted">{t("settings.killswitchSub")}</div>
+        </div>
+        <span class="switch">
+          <input
+            type="checkbox"
+            checked={settings.killswitch}
+            onchange={(e) => settings.setKillswitch((e.currentTarget as HTMLInputElement).checked)}
+          />
+          <span class="slider"></span>
+        </span>
+      </label>
+      <label class="row">
+        <div class="row-text">
+          <div class="row-title">{t("settings.allowLan")}</div>
+          <div class="row-sub muted">{t("settings.allowLanSub")}</div>
+        </div>
+        <span class="switch">
+          <input
+            type="checkbox"
+            checked={settings.allowLan}
+            onchange={(e) => settings.setAllowLan((e.currentTarget as HTMLInputElement).checked)}
+          />
+          <span class="slider"></span>
+        </span>
+      </label>
+      <label class="row">
+        <div class="row-text">
+          <div class="row-title">{t("settings.mtu")}</div>
+          <div class="row-sub muted">{t("settings.mtuSub")}</div>
+        </div>
+        <input
+          class="num-input"
+          type="number"
+          min={MTU_MIN}
+          max={MTU_MAX}
+          step="20"
+          inputmode="numeric"
+          value={settings.mtu}
+          aria-label={t("settings.mtu")}
+          onchange={(e) =>
+            settings.setMtu(Number((e.currentTarget as HTMLInputElement).value))}
+        />
+      </label>
+      <div class="row">
+        <div class="row-text">
+          <div class="row-title">{t("settings.pingConcurrency")}</div>
+          <div class="row-sub muted">{t("settings.pingConcurrencySub")}</div>
+        </div>
+        <input
+          class="num-input narrow"
+          type="number"
+          min="0"
+          max="256"
+          step="1"
+          inputmode="numeric"
+          value={settings.pingConcurrency}
+          aria-label={t("settings.pingConcurrency")}
+          onchange={(e) =>
+            settings.setPingConcurrency(
+              Number((e.currentTarget as HTMLInputElement).value),
+            )}
+        />
+      </div>
       <div class="row">
         <div class="row-text">
           <div class="row-title">{t("settings.subscriptionUa")}</div>
@@ -499,7 +594,7 @@
                   {#if isDownloading && prog}
                     <div class="progress" aria-label="downloading">
                       <div class="progress-track">
-                        <div class="progress-fill" style="width: {pct}%"></div>
+                        <div class="progress-fill" style="transform: scaleX({pct / 100})"></div>
                       </div>
                       <div class="progress-meta muted">
                         {formatBytes(prog.downloaded)}
@@ -730,9 +825,9 @@
        visible gap from the app edge to the panel edge is identical on
        both sides. */
     overflow-y: scroll;
-    /* Top padding clears the fade-y mask so the first section label isn't
+    /* Top padding keeps the first section label off
        dimmed at rest. */
-    padding: 12px 14px 24px 20px;
+    padding: 12px 14px calc(24px + var(--nav-clearance)) 20px;
     display: flex;
     flex-direction: column;
     gap: 16px;
@@ -753,36 +848,6 @@
     letter-spacing: 0.08em;
   }
 
-  .theme-card { padding: 12px; }
-  .theme-row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-  }
-  .theme-tile {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-    padding: 12px;
-    background: var(--bg-elev-2);
-    border: none;
-    border-radius: var(--radius-sm);
-    color: var(--text);
-  }
-  .theme-tile.active {
-    background: var(--bg-elev-3);
-    box-shadow: 0 0 0 2px var(--accent-faint);
-  }
-  .swatch {
-    width: 100%;
-    height: 56px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-  }
-  .swatch-dark { background: linear-gradient(135deg, #1a1a1a 50%, #2e2e2e 50%); }
-  .swatch-light { background: linear-gradient(135deg, #ffffff 50%, #ebebeb 50%); }
-
   /* Same .list-row layout as the design system, but using <label> so the
      entire row activates the toggle without the cell extending past the
      visual edge. */
@@ -793,6 +858,7 @@
     padding: 12px 14px;
     cursor: pointer;
   }
+
   .row + .row {
     border-top: 1px solid var(--bg);
   }
@@ -822,6 +888,41 @@
   }
   .row-title { font-size: 14px; }
   .row-sub { font-size: 12px; margin-top: 2px; }
+  .num-input {
+    /* Card background, no outline. Wide enough for the four digits of an MTU --
+       a 32px box clipped 1500 to "150". */
+    box-sizing: border-box;
+    width: 64px;
+    height: 32px;
+    padding: 0;
+    border-radius: var(--radius-sm);
+    border: none;
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+    /* The value sits in the middle of the square. */
+    text-align: center;
+    text-align-last: center;
+    caret-color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+  /* A stepper on "how many xray processes" is 43 clicks to 43, and the arrows
+     take more room than the number. */
+  .num-input::-webkit-outer-spin-button,
+  .num-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  .num-input {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+  /* A counter of pings holds three digits, an MTU holds four: the same width for
+     both makes the small number look like a field that lost half its value. */
+  .num-input.narrow {
+    width: 32px;
+  }
 
   /* ---------- version-picker modal ---------- */
   .modal-backdrop {
@@ -873,7 +974,8 @@
 
   /* The Versions button on the core row carries its own icon. */
   .versions-btn {
-    background: var(--bg-elev-2);
+    /* Application background, no outline: readable on a row and on its hover. */
+    background: var(--bg);
     border: none;
   }
   .versions-btn:hover:not(:disabled) {
@@ -998,9 +1100,13 @@
     overflow: hidden;
   }
   .progress-fill {
+    /* Scaled, not widened: a download bar updates many times a second, and a width
+       transition lays the page out again on every frame. */
     height: 100%;
+    width: 100%;
+    transform-origin: left center;
     background: var(--accent);
-    transition: width 120ms linear;
+    transition: transform 120ms linear;
   }
   .progress-meta {
     font-size: 11px;

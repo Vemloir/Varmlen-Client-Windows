@@ -4501,7 +4501,7 @@ dependencies = [
 
 [[package]]
 name = "varmlen"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "futures-util",
@@ -4519,6 +4519,7 @@ dependencies = [
  "url",
  "varmlen-protocol",
  "varmlen-service-core",
+ "webview2-com",
  "windows 0.62.2",
  "windows-icons",
  "winreg",
@@ -4526,7 +4527,7 @@ dependencies = [
 
 [[package]]
 name = "varmlen-protocol"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4534,7 +4535,7 @@ dependencies = [
 
 [[package]]
 name = "varmlen-service"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -4552,7 +4553,7 @@ dependencies = [
 
 [[package]]
 name = "varmlen-service-core"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "serde_json",

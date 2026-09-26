@@ -22,7 +22,20 @@ import {
 } from "$lib/location-draft";
 import { supportsTcpEndpointPing } from "$lib/location-ping";
 import { transportSummary } from "$lib/server-label";
+import { hasTraffic, trafficPercent } from "$lib/traffic";
+import {
+  resolveSelection,
+  serverKey,
+  type SelectionIdentity,
+} from "$lib/subscription-selection";
+import { locationKey, migrateLocationKeys } from "$lib/location-identity";
 import { nextRefreshBatch } from "$lib/subscription-refresh";
+import {
+  hiddenCount as countHidden,
+  locationActions as menuForLocation,
+  orderLocations,
+  type LocationAction,
+} from "$lib/location-actions";
 import { runPingsInParallel } from "$lib/ping-scheduler";
 export { transportSummary } from "$lib/server-label";
 
@@ -70,6 +83,17 @@ export interface Subscription {
   collapsed: boolean;
   /** Pinned subscriptions sort to the top of the list. */
   pinned: boolean;
+  /** Endpoint keys (`serverKey`) the user hid from this card. Keys, not entry
+   *  ids: a refresh regenerates every id, so an id-keyed list would forget what
+   *  was hidden. Optional because it did not exist before 0.3.2. */
+  hiddenKeys?: string[];
+  /** Endpoint keys the user pinned, mapped to the time they were pinned. The
+   *  pinned block is ordered by that time, never by measured latency. */
+  pinnedLocations?: Record<string, number>;
+  /** Why the last update failed, or null when the last update worked. A failed
+   *  update keeps the previous locations, so without this the subscription
+   *  simply grows stale with no trace of why. */
+  lastError: string | null;
   /** True while refresh() is in flight. Not persisted. */
   refreshing?: boolean;
 }
@@ -80,23 +104,28 @@ interface Persisted {
   /** Stable host:port of the selection — survives a refresh (which reassigns the
    *  per-entry random ids) so the chosen location stays chosen. */
   selectedKey: string | null;
-}
-
-/** Stable identity of a server entry (random `id` changes on every parse). */
-function serverKey(srv: ServerEntry): string {
-  return srv.raw
-    ? [
-        srv.raw.protocol,
-        srv.raw.host,
-        srv.raw.port,
-        srv.raw.uuid,
-        srv.raw.password ?? "",
-        srv.raw.method ?? "",
-      ].join("\u0000")
-    : srv.id;
+  /** Which subscription and which location label the user picked. A provider
+   *  rotates the endpoint hosts inside a profile (a composite profile's host is
+   *  its first proxy outbound), so `selectedKey` alone can stop matching after a
+   *  refresh while the location the user chose is still there. */
+  selectedSubId: string | null;
+  selectedLabel: string | null;
 }
 
 const KEY = "varmlen.subs";
+
+/** Shown when the fetch worked but yielded nothing usable — the usual sign of a
+ *  provider that answered with an error page or a format we cannot parse. */
+export const NO_LOCATIONS_ERROR = "subscription returned no locations";
+
+/** A fetch error is a transport string; keep the URL out of it and keep the
+ *  message short enough to render in the subscription card. */
+function describeError(e: unknown, url: string): string {
+  const raw =
+    e instanceof Error ? e.message : typeof e === "string" ? e : JSON.stringify(e);
+  const text = (raw || "unknown error").replace(url, "<subscription>").trim();
+  return text.length > 180 ? `${text.slice(0, 177)}...` : text;
+}
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -135,21 +164,31 @@ function migrateIds(subs: Subscription[]): { subs: Subscription[]; remapped: Rec
       if (srv.raw && srv.raw.raw_profile === undefined) srv.raw.raw_profile = null;
       if (srv.editDraft === undefined) srv.editDraft = null;
     }
+    // Hidden/pinned keys were endpoint-only before rows were told apart by label.
+    migrateLocationKeys(sub);
     if (sub.description === undefined) sub.description = null;
     if (sub.webPageUrl === undefined) sub.webPageUrl = null;
     if (sub.sourceJson === undefined) sub.sourceJson = null;
     if (sub.jsonEdited === undefined) sub.jsonEdited = false;
     if (sub.pinned === undefined) sub.pinned = false;
+    if (sub.lastError === undefined) sub.lastError = null;
     if (sub.refreshing) sub.refreshing = false;
   }
   return { subs: mergeManualConfigurations(subs), remapped };
 }
 
 function load(): Persisted {
-  if (!browser) return { subs: [], selectedServerId: null, selectedKey: null };
+  const empty: Persisted = {
+    subs: [],
+    selectedServerId: null,
+    selectedKey: null,
+    selectedSubId: null,
+    selectedLabel: null,
+  };
+  if (!browser) return empty;
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) return { subs: [], selectedServerId: null, selectedKey: null };
+    if (!raw) return empty;
     const parsed = JSON.parse(raw) as Partial<Persisted>;
     const rawSubs = Array.isArray(parsed.subs) ? parsed.subs : [];
     const { subs, remapped } = migrateIds(rawSubs);
@@ -163,9 +202,19 @@ function load(): Persisted {
     }
     const selectedKey =
       typeof parsed.selectedKey === "string" ? parsed.selectedKey : null;
-    return { subs, selectedServerId: selected, selectedKey };
+    const selectedSubId =
+      typeof parsed.selectedSubId === "string" ? parsed.selectedSubId : null;
+    const selectedLabel =
+      typeof parsed.selectedLabel === "string" ? parsed.selectedLabel : null;
+    return {
+      subs,
+      selectedServerId: selected,
+      selectedKey,
+      selectedSubId,
+      selectedLabel,
+    };
   } catch {
-    return { subs: [], selectedServerId: null, selectedKey: null };
+    return empty;
   }
 }
 
@@ -200,6 +249,11 @@ class SubsStore {
   list = $state<Subscription[]>(_initialSubs.subs);
   selectedServerId = $state<string | null>(_initialSubs.selectedServerId);
   selectedKey = $state<string | null>(_initialSubs.selectedKey);
+  selectedSubId = $state<string | null>(_initialSubs.selectedSubId);
+  selectedLabel = $state<string | null>(_initialSubs.selectedLabel);
+  /** The chosen location is missing from the subscription right now. Set by
+   *  reconcileSelection; the UI says so instead of another location being picked. */
+  selectionLost = $state(false);
   importing = $state(false);
 
   private autoRefreshStarted = false;
@@ -219,6 +273,8 @@ class SubsStore {
         subs: this.list,
         selectedServerId: this.selectedServerId,
         selectedKey: this.selectedKey,
+        selectedSubId: this.selectedSubId,
+        selectedLabel: this.selectedLabel,
       }),
     );
     this.rescheduleAutoRefresh();
@@ -226,30 +282,49 @@ class SubsStore {
 
   selectServer(id: string): void {
     this.selectedServerId = id;
-    const srv = this.list.flatMap((s) => s.servers).find((s) => s.id === id);
-    if (srv) this.selectedKey = serverKey(srv);
+    for (const sub of this.list) {
+      const srv = sub.servers.find((s) => s.id === id);
+      if (!srv) continue;
+      this.selectedKey = serverKey(srv);
+      this.selectedSubId = sub.id;
+      this.selectedLabel = srv.name;
+      this.selectionLost = false;
+      break;
+    }
     this.persist();
   }
 
-  /** Keep a location selected: the per-entry `id` is regenerated on every parse
-   *  (refresh/re-import), so resolve the selection by its stable host:port key,
-   *  and auto-pick the first location when nothing is selected. */
+  /** Where the selection came from, before and after a refresh. */
+  private selectionIdentity(): SelectionIdentity {
+    return {
+      serverId: this.selectedServerId,
+      key: this.selectedKey,
+      subId: this.selectedSubId,
+      label: this.selectedLabel,
+    };
+  }
+
+  /** Keep a location selected across a refresh: the per-entry `id` is
+   *  regenerated on every parse, so fall back to the stable host key and then to
+   *  the same label inside the same subscription. A location that vanished leaves
+   *  nothing selected instead of jumping the user to another country. */
   reconcileSelection(): void {
-    const all = this.list.flatMap((s) => s.servers);
-    if (all.length === 0) {
-      this.selectedServerId = null;
-      this.selectedKey = null;
+    const before = this.selectionIdentity();
+    const resolved = resolveSelection(this.list, before);
+    this.selectedServerId = resolved.serverId;
+    this.selectedKey = resolved.key;
+    this.selectedSubId = resolved.subId;
+    this.selectedLabel = resolved.label;
+    this.selectionLost = resolved.lost;
+    if (
+      resolved.serverId !== before.serverId ||
+      resolved.key !== before.key ||
+      resolved.subId !== before.subId ||
+      resolved.label !== before.label ||
+      resolved.lost
+    ) {
       this.persist();
-      return;
     }
-    let current = all.find((s) => s.id === this.selectedServerId);
-    if (!current && this.selectedKey) {
-      current = all.find((s) => serverKey(s) === this.selectedKey);
-    }
-    if (!current) current = all[0];
-    this.selectedServerId = current.id;
-    this.selectedKey = serverKey(current);
-    this.persist();
   }
 
   /** Compile the persisted edit draft for the current selection. Draft text is
@@ -298,15 +373,23 @@ class SubsStore {
 
   remove(subId: string): void {
     this.list = this.list.filter((s) => s.id !== subId);
+    if (this.revealedHidden.has(subId)) {
+      const next = new Set(this.revealedHidden);
+      next.delete(subId);
+      this.revealedHidden = next;
+    }
     this.reconcileSelection();
     this.prunePings();
     this.persist();
   }
 
-  /** Pinned subscriptions first, otherwise insertion order (Array.sort is
-   *  stable, so unpinned entries keep their relative order). */
+  /** Pinned subscription first, then the manually added configurations (they are
+   *  the things the user reaches for when a provider fleet is down), then every
+   *  other subscription. Array.sort is stable, so each group keeps its own order. */
   get ordered(): Subscription[] {
-    return [...this.list].sort((a, b) => Number(b.pinned) - Number(a.pinned));
+    const rank = (sub: Subscription): number =>
+      sub.pinned ? 0 : this.isManualCard(sub) ? 1 : 2;
+    return [...this.list].sort((a, b) => rank(a) - rank(b));
   }
 
   togglePin(subId: string): void {
@@ -318,10 +401,142 @@ class SubsStore {
     this.persist();
   }
 
-  /** Whether the provider sent any traffic figures — gates the traffic pill, so
-   *  a bare config (no quota/usage) doesn't show a meaningless "0B". */
+  /** A manually added configuration: nothing fetches it, so it has no refresh,
+   *  no expiry and no quota, and its locations can be deleted for real. */
+  isManualCard(sub: Subscription): boolean {
+    return !isRemoteConfiguration(sub.url);
+  }
+
+  /** The list for the card: hidden locations drop out, pinned ones move into
+   *  their own block ordered by pin time. `revealHidden` shows the hidden ones
+   *  again without un-hiding them. */
+  visibleLocations(sub: Subscription, revealHidden = false): ServerEntry[] {
+    return orderLocations(sub.servers, {
+      keyOf: (server) => locationKey(server),
+      hiddenKeys: sub.hiddenKeys ?? [],
+      pinnedAt: sub.pinnedLocations ?? {},
+      revealHidden,
+      pinOrder: settings.pinOrder,
+    }).visible;
+  }
+
+  hiddenCount(sub: Subscription): number {
+    return countHidden(
+      sub.servers,
+      (server) => locationKey(server),
+      sub.hiddenKeys ?? [],
+    );
+  }
+
+  /** Hidden endpoint keys resolved to the entries they match right now, so the
+   *  list can dim them while the card reveals them. */
+  hiddenLocationIds(sub: Subscription): string[] {
+    const hidden = sub.hiddenKeys ?? [];
+    if (hidden.length === 0) return [];
+    return sub.servers
+      .filter((s) => hidden.includes(locationKey(s)))
+      .map((s) => s.id);
+  }
+
+  /** Pinned endpoint keys resolved to the entries they match right now, so the
+   *  row can show the same pin mark a pinned card shows. */
+  locationPinnedIds(sub: Subscription): string[] {
+    const pinned = sub.pinnedLocations ?? {};
+    if (Object.keys(pinned).length === 0) return [];
+    return sub.servers
+      .filter((s) => locationKey(s) in pinned)
+      .map((s) => s.id);
+  }
+
+  isLocationHidden(sub: Subscription, server: ServerEntry): boolean {
+    return (sub.hiddenKeys ?? []).includes(locationKey(server));
+  }
+
+  isLocationPinned(sub: Subscription, server: ServerEntry): boolean {
+    return locationKey(server) in (sub.pinnedLocations ?? {});
+  }
+
+  /** The action set for one location: hide for a subscription, delete for a
+   *  manually added configuration. */
+  locationActionsFor(sub: Subscription, server: ServerEntry): LocationAction[] {
+    return menuForLocation({
+      fromSubscription: !this.isManualCard(sub),
+      hidden: this.isLocationHidden(sub, server),
+      pinned: this.isLocationPinned(sub, server),
+    });
+  }
+
+  toggleHideLocation(subId: string, server: ServerEntry): void {
+    const key = locationKey(server);
+    this.list = this.list.map((s) => {
+      if (s.id !== subId) return s;
+      const hidden = s.hiddenKeys ?? [];
+      return {
+        ...s,
+        hiddenKeys: hidden.includes(key)
+          ? hidden.filter((k) => k !== key)
+          : [...hidden, key],
+      };
+    });
+    this.persist();
+  }
+
+  togglePinLocation(subId: string, server: ServerEntry): void {
+    const key = locationKey(server);
+    this.list = this.list.map((s) => {
+      if (s.id !== subId) return s;
+      const pinned = { ...(s.pinnedLocations ?? {}) };
+      if (key in pinned) delete pinned[key];
+      else pinned[key] = Date.now();
+      return { ...s, pinnedLocations: pinned };
+    });
+    this.persist();
+  }
+
+  /** Remove a manually added location for good. When the last one goes, the card
+   *  that only held it goes with it -- a configuration has no other way to be
+   *  deleted, since its card carries no menu. */
+  deleteLocation(subId: string, serverId: string): void {
+    const sub = this.list.find((s) => s.id === subId);
+    if (!sub || !this.isManualCard(sub)) return;
+    const kept = sub.servers.filter((s) => s.id !== serverId);
+    this.list =
+      kept.length === 0
+        ? this.list.filter((s) => s.id !== subId)
+        : this.list.map((s) => (s.id === subId ? { ...s, servers: kept } : s));
+    this.reconcileSelection();
+    this.prunePings();
+    this.persist();
+  }
+
+  /** Cards whose hidden locations the user is looking at right now. Revealing is
+   *  temporary and per card -- it shows them dimmed without un-hiding anything --
+   *  and it lives in the store rather than in the page, because switching to
+   *  Settings and back re-creates the page component and the card started
+   *  pretending the user had never asked to see them. */
+  revealedHidden = $state<Set<string>>(new Set());
+
+  isRevealed(subId: string): boolean {
+    return this.revealedHidden.has(subId);
+  }
+
+  toggleRevealed(subId: string): void {
+    const next = new Set(this.revealedHidden);
+    if (next.has(subId)) next.delete(subId);
+    else next.add(subId);
+    this.revealedHidden = next;
+  }
+
+  /** Whether the provider sent any traffic figures. The strip is drawn either way;
+   *  this only decides whether it shows numbers or says there are none. */
   hasTraffic(sub: Subscription): boolean {
-    return sub.totalBytes > 0 || sub.usedBytes > 0;
+    return hasTraffic(sub.usedBytes, sub.totalBytes);
+  }
+
+  /** How full the strip is, 0-100. No quota means no fraction to draw: an unknown
+   *  total is not an infinite bar, it is a bar with nothing known about it. */
+  trafficPercent(sub: Subscription): number {
+    return trafficPercent(sub.usedBytes, sub.totalBytes);
   }
 
   trafficText(sub: Subscription): string {
@@ -388,6 +603,7 @@ class SubsStore {
         servers,
         collapsed: false,
         pinned: false,
+        lastError: null,
       };
       this.list = isUrl
         ? [...this.list, sub]
@@ -399,9 +615,15 @@ class SubsStore {
     }
   }
 
-  async refresh(subId: string, reschedule = true): Promise<void> {
+  /** false when the subscription still holds what the previous fetch left
+   *  behind, so the automatic scheduler can back off instead of re-firing. */
+  async refresh(
+    subId: string,
+    reschedule = true,
+    manual = true,
+  ): Promise<boolean> {
     const idx = this.list.findIndex((s) => s.id === subId);
-    if (idx < 0) return;
+    if (idx < 0) return false;
     const sub = this.list[idx];
     // mark this sub as refreshing for the UI spinner
     this.list = this.list.map((s) =>
@@ -413,10 +635,15 @@ class SubsStore {
         settings.subscriptionUserAgent,
       );
       if (result.servers.length === 0) {
+        // The fetch worked and the parser produced nothing. Reporting this as a
+        // success would silently freeze the location list at the provider's
+        // previous fleet.
         this.list = this.list.map((s) =>
-          s.id === subId ? { ...s, refreshing: false } : s,
+          s.id === subId
+            ? { ...s, refreshing: false, lastError: NO_LOCATIONS_ERROR }
+            : s,
         );
-        return;
+        return false;
       }
       // The latest response is authoritative, full stop — no falling back to
       // cached quota/expiry from a previous fetch. If this response doesn't
@@ -443,9 +670,14 @@ class SubsStore {
               jsonEdited: false,
               importedAt: new Date().toISOString(),
               refreshing: false,
+              lastError: null,
             }
           : s,
       );
+      // Nothing here restores a hidden location, not even an explicit Refresh:
+      // the user hid that row and only he brings it back (the card's "N hidden"
+      // line), or he removes the subscription and imports it again. A refresh is
+      // the provider's business, not the user's undo button.
       // The server IDs were just regenerated — re-resolve the selection from its
       // stable key so the chosen location stays chosen.
       this.reconcileSelection();
@@ -455,11 +687,15 @@ class SubsStore {
     } catch (e) {
       console.error("refresh failed:", e);
       this.list = this.list.map((s) =>
-        s.id === subId ? { ...s, refreshing: false } : s,
+        s.id === subId
+          ? { ...s, refreshing: false, lastError: describeError(e, sub.url) }
+          : s,
       );
+      return false;
     } finally {
       if (reschedule) this.rescheduleAutoRefresh();
     }
+    return true;
   }
 
   /** Validate and atomically apply edited subscription JSON. Remote sources keep
@@ -489,6 +725,7 @@ class SubsStore {
             jsonEdited: remote,
             servers: freshServers,
             importedAt: new Date().toISOString(),
+            lastError: null,
           }
         : s,
     );
@@ -496,8 +733,13 @@ class SubsStore {
     this.prunePings();
   }
 
-  /** Start exact future-boundary scheduling without fetching on application
-   *  mount. Missed cycles are skipped by nextRefreshBatch. */
+  /** Epoch ms of the last automatic attempt per subscription, with its outcome.
+   *  In-memory: a restart is exactly when a new catch-up attempt is wanted. */
+  private autoRefreshAttempts = new Map<string, { atMs: number; ok: boolean }>();
+
+  /** Start scheduling. A subscription whose provider interval has already passed
+   *  is fetched immediately — the client is closed between launches, and a
+   *  provider rotates its endpoints while it is. */
   startAutoRefresh(): () => void {
     if (this.autoRefreshStarted) return () => this.stopAutoRefresh();
     this.autoRefreshStarted = true;
@@ -529,6 +771,8 @@ class SubsStore {
         id: sub.id,
         lastSuccessIso: sub.importedAt,
         intervalHours: sub.updateIntervalHours,
+        lastAttemptMs: this.autoRefreshAttempts.get(sub.id)?.atMs ?? null,
+        lastAttemptOk: this.autoRefreshAttempts.get(sub.id)?.ok,
       })),
       Date.now(),
     );
@@ -551,7 +795,9 @@ class SubsStore {
   private async refreshAutoBatch(ids: string[]): Promise<void> {
     for (const id of ids) {
       if (!this.autoRefreshStarted || !settings.subscriptionAutoUpdate) break;
-      await this.refresh(id, false);
+      const atMs = Date.now();
+      const ok = await this.refresh(id, false, false);
+      this.autoRefreshAttempts.set(id, { atMs, ok });
     }
     this.rescheduleAutoRefresh();
   }
@@ -693,7 +939,11 @@ class SubsStore {
     const next = { ...this.pings };
     for (const s of servers) next[s.id] = "pinging";
     this.pings = next;
-    await runPingsInParallel(servers, (server) => this.pingServer(server));
+    await runPingsInParallel(
+      servers,
+      (server) => this.pingServer(server),
+      settings.pingConcurrency,
+    );
   }
 
   /** Probe every server across every subscription. Safe to call while one is

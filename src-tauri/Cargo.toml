@@ -31,4 +31,12 @@ url = "2"
 rfd = "0.15"
 winreg = "0.55"
 windows-icons = "0.4"
-windows = { version = "0.62.2", features = ["Win32_Storage_FileSystem"] }
+windows = { version = "0.62.2", features = [
+  "Win32_NetworkManagement_IpHelper",
+  "Win32_NetworkManagement_Ndis",
+  "Win32_Networking_WinSock",
+  "Win32_Storage_FileSystem",
+] }
+# The WebView2 under the window, to reload the page when its renderer dies.
+# Same version wry already builds.
+webview2-com = "0.38"

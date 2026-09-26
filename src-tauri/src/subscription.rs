@@ -2098,6 +2098,7 @@ AllowedIPs = 0.0.0.0/0
             &crate::split::SplitInput::default(),
             false,
             "warn",
+            crate::xray::TUN_MTU,
         );
         assert_eq!(
             first_config["outbounds"][0]["settings"]["peers"][0]["allowedIPs"],
@@ -2119,6 +2120,7 @@ AllowedIPs = 0.0.0.0/0
             &crate::split::SplitInput::default(),
             false,
             "warn",
+            crate::xray::TUN_MTU,
         );
         assert_eq!(
             xray_config["outbounds"][0]["settings"]["peers"][0]["endpoint"],
@@ -2149,6 +2151,7 @@ AllowedIPs = 0.0.0.0/0
                 &crate::split::SplitInput::default(),
                 false,
                 "warn",
+                crate::xray::TUN_MTU,
             );
             assert_eq!(config["outbounds"][0]["protocol"], server.protocol);
         }

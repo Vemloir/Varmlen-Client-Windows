@@ -18,7 +18,12 @@ describe("card surface contract", () => {
       /\.list > \* \+ \*\s*\{[^}]*border-top:\s*1px solid var\(--bg\);/s,
     );
     expect(home).toMatch(/\.sub-card\s*\{[^}]*border:\s*none;/s);
-    expect(settings).toMatch(/\.theme-tile\s*\{[^}]*border:\s*none;/s);
+    // The theme picker is a dropdown row now, not a pair of tiles, so the only
+    // surface left in Appearance is the row itself.
+    expect(settings).toMatch(/<Dropdown\s+value=\{theme\.current\}/s);
+    // And a switch in its off state takes the app's own background, so it reads as
+    // a hole in the row instead of another elevated grey plate.
+    expect(css).toMatch(/\.switch \.slider\s*\{[^}]*background:\s*var\(--bg\);/s);
     expect(settings).toMatch(
       /\.row \+ \.row\s*\{[^}]*border-top:\s*1px solid var\(--bg\);/s,
     );
@@ -28,12 +33,26 @@ describe("card surface contract", () => {
     );
     expect(split).toMatch(/\.empty-state\s*\{[^}]*border:\s*none;/s);
     expect(split).toMatch(/\.picker\s*\{[^}]*border:\s*none;/s);
+    // No platform clear button in the apps search -- it is a control the theme
+    // does not own.
+    expect(css).toMatch(
+      /input\[type="search"\]::-webkit-search-cancel-button\s*\{[^}]*display:\s*none;/s,
+    );
+    // Inside the apps window every surface is the application background, so the
+    // separator has to be the lighter colour -- the old one would be invisible.
+    expect(split).toMatch(/\.picker\s*\{[^}]*background:\s*var\(--bg\);/s);
     expect(split).toMatch(
-      /\.picker-row \+ \.picker-row\s*\{[^}]*border-top:\s*1px solid var\(--bg\);/s,
+      /\.picker-row \+ \.picker-row\s*\{[^}]*border-top:\s*1px solid var\(--bg-elev\);/s,
+    );
+    expect(split).toMatch(
+      /\.modal input\[type="search"\]\s*\{[^}]*background:\s*var\(--bg\);[^}]*border:\s*none;/s,
+    );
+    expect(split).toMatch(
+      /\.modal-actions \.btn\s*\{[^}]*background:\s*var\(--bg\);[^}]*border:\s*none;/s,
     );
   });
 
-  it("keeps the View log hover surface square without changing dropdown rounding", () => {
+  it("keeps settings controls readable on a hovered row", () => {
     const settings = read("../routes/settings/+page.svelte");
     const dropdown = read("./components/Dropdown.svelte");
 
@@ -41,11 +60,25 @@ describe("card surface contract", () => {
     expect(dropdown).not.toMatch(
       /\.trigger\[aria-expanded="true"\]\s*\{[^}]*border-top-left-radius:\s*0;/s,
     );
+    // Controls take the APPLICATION background (--bg) with no outline: the card
+    // row is lighter and its hover is lighter still, so they read in both states.
     expect(dropdown).toMatch(
-      /\.trigger\s*\{[^}]*background:\s*var\(--bg-elev-2\);[^}]*border:\s*none;/s,
+      /\.trigger\s*\{[^}]*background:\s*var\(--bg\);[^}]*border:\s*none;/s,
+    );
+    expect(dropdown).toMatch(
+      /\.trigger:hover\s*\{[^}]*background:\s*var\(--bg-elev-3\);/s,
     );
     expect(settings).toMatch(
-      /\.versions-btn\s*\{[^}]*background:\s*var\(--bg-elev-2\);[^}]*border:\s*none;/s,
+      /\.versions-btn\s*\{[^}]*background:\s*var\(--bg\);[^}]*border:\s*none;/s,
+    );
+    expect(settings).toMatch(
+      /\.num-input\s*\{[^}]*background:\s*var\(--bg\);[^}]*text-align:\s*center;/s,
+    );
+    // One width for a four-digit MTU and a three-digit ping counter makes the
+    // small number look like a field that lost half of its value.
+    expect(settings).toMatch(/\.num-input\.narrow\s*\{[^}]*width:\s*32px;/s);
+    expect(settings).toMatch(
+      /class="num-input narrow"[^>]*\n\s*type="number"[^>]*\n\s*min="0"/,
     );
   });
 
@@ -114,5 +147,30 @@ describe("card surface contract", () => {
     expect(settings).toMatch(
       /\.log-text\s*\{[^}]*min-width:\s*0;[^}]*max-width:\s*100%;[^}]*margin:\s*0;/s,
     );
+  });
+
+  it("says which split row the pointer is on", () => {
+    const css = read("../app.css");
+    // The same tint the settings rows and the location rows use, behind the same
+    // guards: a touch device has no pointer to follow, and Android draws its own.
+    expect(css).toMatch(
+      /@media \(hover: hover\) and \(pointer: fine\) \{\s*html:not\(\.is-android\) \.list-row:hover \{\s*background: var\(--bg-elev-2\);/s,
+    );
+  });
+
+  it("draws the traffic strip as a trough in the card's own colour", () => {
+    const home = read("../routes/+page.svelte");
+    const css = read("../app.css");
+    // No plate of its own; a hairline in the theme's outline colour holds it apart
+    // from the card, and the used part is filled in that same colour.
+    expect(home).toMatch(/\.traffic-bar\s*\{[^}]*background:\s*var\(--bg-elev\);/s);
+    expect(home).toMatch(/\.traffic-bar\s*\{[^}]*border:\s*1px solid var\(--hairline\);/s);
+    expect(home).toMatch(/\.traffic-fill\s*\{[^}]*background:\s*var\(--hairline-fill\);/s);
+    expect(css).toMatch(/--hairline:\s*rgba\(255, 255, 255, 0\.55\);/);
+    expect(css).toMatch(/--hairline:\s*rgba\(0, 0, 0, 0\.55\);/);
+    // And it is drawn whatever the provider sent -- an unknown quota is a fact.
+    expect(home).toMatch(/class="traffic-bar"/);
+    expect(home).not.toMatch(/\{#if subs\.hasTraffic\(sub\)\}/);
+    expect(home).toMatch(/width: \{subs\.trafficPercent\(sub\)\}%/);
   });
 });

@@ -56,6 +56,7 @@ pub async fn vpn_connect(
     killswitch: bool,
     allow_lan: bool,
     log_level: Option<String>,
+    mtu: Option<u32>,
 ) -> Result<HelperResponse, String> {
     validate_server(&server)?;
     let _operation = vpn_op_lock().lock().await;
@@ -71,8 +72,10 @@ pub async fn vpn_connect(
         .collect();
 
     let level = log_level.unwrap_or_else(|| "warn".into());
+    // The interface MTU is the user's, clamped to what an interface can carry.
+    let mtu = crate::xray::tun_mtu(mtu);
     let xray_config =
-        serde_json::to_string_pretty(&build_xray_config(&server, &split, allow_lan, &level))
+        serde_json::to_string_pretty(&build_xray_config(&server, &split, allow_lan, &level, mtu))
             .map_err(|error| format!("serialize Xray config: {error}"))?;
 
     let validation_config = serde_json::to_string_pretty(&build_connection_probe_config(&server)?)
@@ -104,6 +107,60 @@ pub async fn vpn_disconnect() -> Result<HelperResponse, String> {
 #[tauri::command]
 pub async fn vpn_status() -> Result<HelperResponse, String> {
     service_client::service_status().await.map(response)
+}
+
+/// Traffic through the tunnel adapter since it came up. The field names are the
+/// Linux client's, so the same interface reads both.
+#[derive(Debug, Clone, Serialize)]
+pub struct TunnelStats {
+    pub tx_bytes: u64,
+    pub rx_bytes: u64,
+    /// When the adapter appeared, in unix seconds. Windows does not say, so the
+    /// interface counts the session from when it noticed the connection.
+    pub since_unix: Option<u64>,
+}
+
+/// The Wintun adapter's own counters, or None when there is no adapter
+/// (disconnected). Reading them needs no privilege and no call to the service.
+#[tauri::command]
+pub fn tunnel_stats() -> Option<TunnelStats> {
+    read_tunnel_stats()
+}
+
+#[cfg(windows)]
+fn read_tunnel_stats() -> Option<TunnelStats> {
+    use windows::Win32::NetworkManagement::IpHelper::{FreeMibTable, GetIfTable2, MIB_IF_TABLE2};
+
+    let wanted: Vec<u16> = crate::xray::TUN_NAME.encode_utf16().collect();
+    let mut table: *mut MIB_IF_TABLE2 = std::ptr::null_mut();
+    // SAFETY: GetIfTable2 allocates the table and hands it over; it is read only
+    // within its reported length and released with FreeMibTable below.
+    unsafe {
+        if GetIfTable2(&mut table).is_err() || table.is_null() {
+            return None;
+        }
+        let rows =
+            std::slice::from_raw_parts((*table).Table.as_ptr(), (*table).NumEntries as usize);
+        let found = rows.iter().find_map(|row| {
+            let len = row
+                .Alias
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(row.Alias.len());
+            (row.Alias[..len] == wanted[..]).then(|| TunnelStats {
+                tx_bytes: row.OutOctets,
+                rx_bytes: row.InOctets,
+                since_unix: None,
+            })
+        });
+        FreeMibTable(table as *const _);
+        found
+    }
+}
+
+#[cfg(not(windows))]
+fn read_tunnel_stats() -> Option<TunnelStats> {
+    None
 }
 
 #[tauri::command]

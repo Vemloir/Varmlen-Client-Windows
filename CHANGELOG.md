@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.4.0
+
+The Linux 0.4.0 interface, ported, and the grey window fixed on Windows too.
+
+- The window no longer turns grey for good. The page runs in a WebView2 renderer
+  process of its own, and when that process dies or stops answering, WebView2
+  raises `ProcessFailed` and leaves an empty or frozen page. Nothing listened for
+  it, so the tray and the tunnel went on running behind a dead window until the
+  app was restarted. The page is now reloaded into a new renderer, at most three
+  times in two minutes so a page that crashes on load cannot loop. Nothing is lost
+  on the way: subscriptions and settings live in local storage and the tunnel's
+  state is read back from the service.
+- The shell from Linux 0.4.0: four places to swipe between -- Home, applications,
+  websites, Settings -- a page that follows the finger one for one and meets a wall
+  only where the strip ends, a release decided by distance or by flick, the
+  neighbour mounted beside the finger instead of a strip of background, the tab
+  pill floating over the pages, and a scrollbar drawn by the shell so it stays at
+  the edge during a swipe.
+- Split tunnelling keeps its `Apps / Websites` pill and slides the chosen half
+  under it; each half scrolls and remembers its own place, and the plate follows
+  the finger. Websites are written without the asterisk: a name means itself and
+  its subdomains. Adding a website is a window with one field and suggestions.
+  Applications keep showing the executable's name, with the full path on hover.
+- Locations: a menu per location (right click or long press) with ping, rename,
+  pin, hide and delete; pinned locations on top, in the order chosen in Settings;
+  hiding that survives background updates and is undone by a re-import.
+- The session pill under the power button reports upload and download per second
+  and how long the tunnel has been up, read from the Wintun adapter's own counters.
+- The interface MTU is a setting. It travels to the core's tun inbound and is
+  clamped to 1280..9000 rather than reset.
+- Settings are grouped by what they belong to, with tab labels, pinned-location
+  order and simultaneous pings (0, the default, keeps probing every location at
+  once, as before).
+- One rounding family, one panel colour, a segmented control whose selection
+  slides, nothing selectable except the fields the user types into.
+
 ## 0.3.2
 
 - Show the `JSON` marker on Hysteria2 locations too. A location edited as a

@@ -3,6 +3,8 @@ import {
   normalizeSubscriptionUserAgent,
   type SubscriptionUserAgent,
 } from "./subscription-user-agent";
+import { MTU_DEFAULT, normalizeMtu } from "./mtu";
+import type { PinOrder } from "./location-actions";
 
 export type LogLevel = "debug" | "warn" | "error";
 
@@ -16,6 +18,18 @@ interface Persisted {
   /** Identity advertised only while importing/refreshing subscriptions. */
   subscriptionUserAgent: SubscriptionUserAgent;
   subscriptionAutoUpdate: boolean;
+  /** How long a hidden subscription location stays hidden. */
+  /** Order of the pinned locations among themselves. */
+  pinOrder: PinOrder;
+  /** Simultaneous location pings; 0 = no limit (every ping is its own short-lived
+   *  xray process, so an unbounded burst costs memory and CPU). */
+  pingConcurrency: number;
+  /** Names under the bottom tab icons. Off by default: three tabs with two words
+   *  each cost vertical space the location list needs. */
+  navLabels: boolean;
+  /** MTU of the tunnel interface. A path that encapsulates again cannot carry
+   *  Ethernet's 1500 inside the tunnel, and then only large responses die. */
+  mtu: number;
 }
 
 const KEY = "varmlen.settings";
@@ -26,9 +40,14 @@ const DEFAULTS: Persisted = {
   logLevel: "warn",
   subscriptionUserAgent: "varmlen",
   subscriptionAutoUpdate: true,
+  pinOrder: "newestLast",
+  pingConcurrency: 0,
+  mtu: MTU_DEFAULT,
+  navLabels: false,
 };
 
 const LOG_LEVELS: LogLevel[] = ["debug", "warn", "error"];
+const PIN_ORDERS: PinOrder[] = ["newestLast", "newestFirst"];
 
 function load(): Persisted {
   if (!browser) return DEFAULTS;
@@ -48,6 +67,12 @@ function load(): Persisted {
       ),
       subscriptionAutoUpdate:
         parsed.subscriptionAutoUpdate ?? DEFAULTS.subscriptionAutoUpdate,
+      pinOrder: PIN_ORDERS.includes(parsed.pinOrder as PinOrder)
+        ? (parsed.pinOrder as PinOrder)
+        : DEFAULTS.pinOrder,
+      pingConcurrency: sanitizePingConcurrency(parsed.pingConcurrency),
+      mtu: normalizeMtu(parsed.mtu),
+      navLabels: parsed.navLabels ?? DEFAULTS.navLabels,
     };
   } catch {
     return DEFAULTS;
@@ -65,6 +90,10 @@ class SettingsStore {
     _initialSettings.subscriptionUserAgent,
   );
   subscriptionAutoUpdate = $state(_initialSettings.subscriptionAutoUpdate);
+  pinOrder = $state<PinOrder>(_initialSettings.pinOrder);
+  pingConcurrency = $state<number>(_initialSettings.pingConcurrency);
+  mtu = $state<number>(_initialSettings.mtu);
+  navLabels = $state<boolean>(_initialSettings.navLabels);
 
   private persist(): void {
     if (!browser) return;
@@ -77,6 +106,10 @@ class SettingsStore {
         logLevel: this.logLevel,
         subscriptionUserAgent: this.subscriptionUserAgent,
         subscriptionAutoUpdate: this.subscriptionAutoUpdate,
+        pinOrder: this.pinOrder,
+        pingConcurrency: this.pingConcurrency,
+        mtu: this.mtu,
+        navLabels: this.navLabels,
       }),
     );
   }
@@ -93,6 +126,31 @@ class SettingsStore {
     this.subscriptionAutoUpdate = v;
     this.persist();
   }
+  setPinOrder(v: PinOrder): void {
+    this.pinOrder = PIN_ORDERS.includes(v) ? v : DEFAULTS.pinOrder;
+    this.persist();
+  }
+  setPingConcurrency(v: number): void {
+    this.pingConcurrency = sanitizePingConcurrency(v);
+    this.persist();
+  }
+  setNavLabels(v: boolean): void {
+    this.navLabels = v;
+    this.persist();
+  }
+  /** Out-of-range values are clamped by `normalizeMtu`, never reset: see mtu.ts. */
+  setMtu(v: number): void {
+    this.mtu = normalizeMtu(v);
+    this.persist();
+  }
+
+}
+
+/** `0` means "no limit"; anything unusable falls back to that default. */
+function sanitizePingConcurrency(value: unknown): number {
+  const n = typeof value === "number" ? Math.floor(value) : Number.NaN;
+  if (!Number.isFinite(n) || n < 0) return DEFAULTS.pingConcurrency;
+  return n;
 }
 
 export const settings = new SettingsStore();
